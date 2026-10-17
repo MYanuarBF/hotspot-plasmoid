@@ -1,0 +1,635 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Hotspot AP Controller for Dual-Adapter Setup (Intel PCIe + AIC8800 USB)
+# ==============================================================================
+# - PCIe Adapter (Intel AX210): Connects to upstream Wi-Fi (Internet)
+# - USB Adapter (AIC8800): Broadcasts Wi-Fi Hotspot (Access Point)
+# ==============================================================================
+
+set -eo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hotspot-aic8800"
+CONFIG_FILE="$CONFIG_DIR/config"
+CON_NAME="Hotspot-AIC8800"
+
+# Colors
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_GREEN="\033[32m"
+C_CYAN="\033[36m"
+C_YELLOW="\033[33m"
+C_RED="\033[31m"
+C_DIM="\033[2m"
+
+# Default settings
+DEFAULT_SSID="AIC8800-Hotspot"
+DEFAULT_PASS="hotspot12345"
+DEFAULT_BAND="2.4"   # "2.4" (bg) or "5" (a)
+DEFAULT_CHANNEL="6"  # 6 = standard non-overlapping 2.4GHz channel
+
+# Load or initialize config
+load_config() {
+    if [[ ! -d "$CONFIG_DIR" ]]; then
+        mkdir -p "$CONFIG_DIR"
+    fi
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        cat <<EOF > "$CONFIG_FILE"
+# Hotspot Configuration
+SSID="$DEFAULT_SSID"
+PASSWORD="$DEFAULT_PASS"
+BAND="$DEFAULT_BAND"
+CHANNEL="$DEFAULT_CHANNEL"
+EOF
+    fi
+
+    # Source config file safely
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+
+    SSID="${SSID:-$DEFAULT_SSID}"
+    PASSWORD="${PASSWORD:-$DEFAULT_PASS}"
+    BAND="${BAND:-$DEFAULT_BAND}"
+    CHANNEL="${CHANNEL:-$DEFAULT_CHANNEL}"
+}
+
+save_config() {
+    mkdir -p "$CONFIG_DIR"
+    cat <<EOF > "$CONFIG_FILE"
+# Hotspot Configuration
+SSID="$SSID"
+PASSWORD="$PASSWORD"
+BAND="$BAND"
+CHANNEL="$CHANNEL"
+EOF
+}
+
+# ------------------------------------------------------------------------------
+# Adapter Detection Functions
+# ------------------------------------------------------------------------------
+
+# Detect AIC8800 USB Adapter
+detect_aic8800() {
+    # 1. Search by exact USB Vendor & Product ID (368b:8d81)
+    for iface_path in /sys/class/net/*; do
+        local iface
+        iface=$(basename "$iface_path")
+        if [[ -d "$iface_path/wireless" || -d "$iface_path/phy80211" ]]; then
+            local vid="" pid=""
+            if [[ -f "$iface_path/device/idVendor" ]]; then
+                vid=$(cat "$iface_path/device/idVendor" 2>/dev/null || true)
+            fi
+            if [[ -f "$iface_path/device/idProduct" ]]; then
+                pid=$(cat "$iface_path/device/idProduct" 2>/dev/null || true)
+            fi
+            if [[ "$vid" == "368b" && "$pid" == "8d81" ]]; then
+                echo "$iface"
+                return 0
+            fi
+        fi
+    done
+
+    # 2. Search by USB bus and aic driver
+    for iface_path in /sys/class/net/*; do
+        local iface
+        iface=$(basename "$iface_path")
+        if [[ -d "$iface_path/wireless" || -d "$iface_path/phy80211" ]]; then
+            local devpath
+            devpath=$(readlink -f "$iface_path/device" 2>/dev/null || true)
+            if echo "$devpath" | grep -qi "usb"; then
+                if grep -qi "aic" "$iface_path/device/uevent" 2>/dev/null || lsmod | grep -qi "aic8800"; then
+                    echo "$iface"
+                    return 0
+                fi
+            fi
+        fi
+    done
+
+    # 3. Fallback: return wlan1 if it exists
+    if [[ -d "/sys/class/net/wlan1" ]]; then
+        echo "wlan1"
+        return 0
+    fi
+
+    return 1
+}
+
+# Detect Intel PCIe Adapter (Internet upstream)
+detect_intel_pcie() {
+    # 1. Search by PCI Vendor ID (0x8086) for wireless interface
+    for iface_path in /sys/class/net/*; do
+        local iface
+        iface=$(basename "$iface_path")
+        if [[ -d "$iface_path/wireless" || -d "$iface_path/phy80211" ]]; then
+            local vid=""
+            if [[ -f "$iface_path/device/vendor" ]]; then
+                vid=$(cat "$iface_path/device/vendor" 2>/dev/null || true)
+            fi
+            if [[ "$vid" == "0x8086" ]]; then
+                echo "$iface"
+                return 0
+            fi
+        fi
+    done
+
+    # 2. Fallback: Check default route device
+    local def_dev
+    def_dev=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+    if [[ -n "$def_dev" && -d "/sys/class/net/$def_dev/wireless" ]]; then
+        echo "$def_dev"
+        return 0
+    fi
+
+    # 3. Fallback: return wlan0
+    if [[ -d "/sys/class/net/wlan0" ]]; then
+        echo "wlan0"
+        return 0
+    fi
+
+    return 1
+}
+
+# Print stylized banner
+banner() {
+    echo -e "${C_CYAN}${C_BOLD}====================================================${C_RESET}"
+    echo -e "${C_CYAN}${C_BOLD}   Wi-Fi Hotspot Controller (AIC8800 + Intel PCIe)  ${C_RESET}"
+    echo -e "${C_CYAN}${C_BOLD}====================================================${C_RESET}"
+}
+
+# ------------------------------------------------------------------------------
+# Hotspot Actions
+# ------------------------------------------------------------------------------
+
+is_hotspot_active() {
+    local iface="$1"
+    if nmcli -t -f DEVICE,TYPE,STATE dev 2>/dev/null | grep -E "^${iface}:wifi:connected" >/dev/null; then
+        local active_con
+        active_con=$(nmcli -t -f DEVICE,CONNECTION dev 2>/dev/null | grep "^${iface}:" | cut -d: -f2)
+        if [[ "$active_con" == "$CON_NAME" ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+show_qr() {
+    local ssid="$1"
+    local pass="$2"
+    echo -e "\n${C_BOLD}Scan QR code to connect with your phone:${C_RESET}"
+    if command -v qrencode >/dev/null 2>&1; then
+        local qr_payload="WIFI:S:${ssid};T:WPA;P:${pass};;"
+        if [[ -z "$pass" ]]; then
+            qr_payload="WIFI:S:${ssid};T:nopass;;"
+        fi
+        qrencode -t UTF8 "$qr_payload"
+    else
+        echo -e "${C_YELLOW}(Install 'qrencode' to see a scan-to-connect QR code here)${C_RESET}"
+    fi
+}
+
+start_hotspot() {
+    load_config
+
+    local target_iface
+    target_iface=$(detect_aic8800) || {
+        echo -e "${C_RED}Error: Adapter USB AIC8800 tidak ditemukan!${C_RESET}"
+        exit 1
+    }
+
+    local internet_iface
+    internet_iface=$(detect_intel_pcie || echo "none")
+
+    echo -e "${C_CYAN}Hotspot Adapter (USB):${C_RESET} ${C_BOLD}${target_iface}${C_RESET} [AIC8800]"
+    echo -e "${C_CYAN}Internet Adapter (PCIe):${C_RESET} ${C_BOLD}${internet_iface}${C_RESET} [Intel AX210]"
+
+    # Check if already active
+    if is_hotspot_active "$target_iface"; then
+        echo -e "${C_YELLOW}Hotspot sudah aktif di interface ${target_iface}!${C_RESET}"
+        status_hotspot
+        return 0
+    fi
+
+    # Map band
+    local nm_band="bg"
+    if [[ "$BAND" == "5" || "$BAND" == "5ghz" || "$BAND" == "a" ]]; then
+        nm_band="a"
+    fi
+
+    # Validate password
+    if [[ -n "$PASSWORD" && ${#PASSWORD} -lt 8 ]]; then
+        echo -e "${C_RED}Error: Password Wi-Fi minimal harus 8 karakter!${C_RESET}"
+        exit 1
+    fi
+
+    echo -e "\n${C_BOLD}Menyiapkan Hotspot...${C_RESET}"
+    echo -e "  • SSID     : ${C_GREEN}${SSID}${C_RESET}"
+    echo -e "  • Password : ${C_GREEN}${PASSWORD}${C_RESET}"
+    echo -e "  • Band     : ${C_GREEN}$([[ "$nm_band" == "a" ]] && echo "5 GHz (802.11a/n/ac/ax)" || echo "2.4 GHz (802.11b/g/n/ax)")${C_RESET}"
+    echo -e "  • Channel  : ${C_GREEN}$([[ "$CHANNEL" == "0" || "$CHANNEL" == "auto" ]] && echo "Auto" || echo "$CHANNEL")${C_RESET}"
+
+    # Remove existing profile if any to ensure clean configuration
+    nmcli connection delete "$CON_NAME" >/dev/null 2>&1 || true
+
+    # Create connection
+    nmcli connection add \
+        type wifi \
+        ifname "$target_iface" \
+        con-name "$CON_NAME" \
+        autoconnect no \
+        ssid "$SSID" >/dev/null
+
+    # Configure connection
+    nmcli connection modify "$CON_NAME" \
+        802-11-wireless.mode ap \
+        802-11-wireless.band "$nm_band" \
+        ipv4.method shared
+
+    # Set channel (default 6 for 2.4GHz, 36 for 5GHz to avoid buggy channels like 13)
+    local target_ch="$CHANNEL"
+    if [[ "$target_ch" == "0" || "$target_ch" == "auto" || -z "$target_ch" ]]; then
+        if [[ "$nm_band" == "a" ]]; then
+            target_ch="36"
+        else
+            target_ch="6"
+        fi
+    fi
+    nmcli connection modify "$CON_NAME" 802-11-wireless.channel "$target_ch"
+
+    if [[ -n "$PASSWORD" ]]; then
+        nmcli connection modify "$CON_NAME" \
+            802-11-wireless-security.key-mgmt wpa-psk \
+            802-11-wireless-security.proto rsn \
+            802-11-wireless-security.pairwise ccmp \
+            802-11-wireless-security.group ccmp \
+            802-11-wireless-security.pmf 1 \
+            802-11-wireless-security.psk "$PASSWORD"
+    else
+        nmcli connection modify "$CON_NAME" \
+            802-11-wireless-security.key-mgmt ""
+    fi
+
+    # Activate
+    echo -e "Mengaktifkan Access Point pada ${target_iface}..."
+    if nmcli connection up "$CON_NAME" >/dev/null 2>&1; then
+        echo -e "${C_GREEN}${C_BOLD}✓ Hotspot Berhasil Dinyalakan!${C_RESET}"
+        
+        # Get Gateway IP
+        local ip_addr
+        ip_addr=$(ip -4 addr show dev "$target_iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1 || echo "10.42.0.1")
+        echo -e "  • Gateway IP : ${C_BOLD}${ip_addr}${C_RESET}"
+        
+        show_qr "$SSID" "$PASSWORD"
+
+        # Check UFW warning if present
+        check_firewall_quiet
+    else
+        echo -e "${C_RED}Gagal mengaktifkan hotspot. Coba cek NetworkManager log.${C_RESET}"
+        exit 1
+    fi
+}
+
+stop_hotspot() {
+    local target_iface
+    target_iface=$(detect_aic8800 || echo "wlan1")
+
+    echo -e "Mematikan Hotspot..."
+    if nmcli connection down "$CON_NAME" >/dev/null 2>&1; then
+        echo -e "${C_GREEN}${C_BOLD}✓ Hotspot berhasil dimatikan.${C_RESET}"
+    else
+        # Try disconnecting device
+        nmcli device disconnect "$target_iface" >/dev/null 2>&1 || true
+        echo -e "${C_GREEN}${C_BOLD}✓ Hotspot sudah tidak aktif.${C_RESET}"
+    fi
+}
+
+restart_hotspot() {
+    stop_hotspot
+    sleep 1
+    start_hotspot
+}
+
+status_hotspot() {
+    load_config
+    local target_iface
+    target_iface=$(detect_aic8800 || echo "wlan1")
+    local internet_iface
+    internet_iface=$(detect_intel_pcie || echo "wlan0")
+
+    banner
+    echo -e "${C_BOLD}Hardware Adapters:${C_RESET}"
+    echo -e "  [USB Hotspot]     : ${C_CYAN}${target_iface}${C_RESET} (AIC8800 802.11ax Dongle)"
+    echo -e "  [PCIe Internet]   : ${C_CYAN}${internet_iface}${C_RESET} (Intel AX210 Wi-Fi 6E)"
+
+    echo -e "\n${C_BOLD}Status Hotspot:${C_RESET}"
+    if is_hotspot_active "$target_iface"; then
+        echo -e "  State      : ${C_GREEN}${C_BOLD}● AKTIF (RUNNING)${C_RESET}"
+        
+        local cur_ssid
+        cur_ssid=$(nmcli -t -f 802-11-wireless.ssid connection show "$CON_NAME" 2>/dev/null | cut -d: -f2 || echo "$SSID")
+        local ip_addr
+        ip_addr=$(ip -4 addr show dev "$target_iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1 || echo "10.42.0.1")
+        
+        # Get frequency and channel from iw
+        local freq_info
+        freq_info=$(iw dev "$target_iface" info 2>/dev/null | grep -oP 'channel \d+ \(\d+ MHz\)' || echo "N/A")
+
+        echo -e "  SSID       : ${C_BOLD}${cur_ssid:-$SSID}${C_RESET}"
+        echo -e "  IP Gateway : ${C_BOLD}${ip_addr}${C_RESET}"
+        echo -e "  Channel    : ${C_BOLD}${freq_info}${C_RESET}"
+
+        echo -e "\n${C_BOLD}Perangkat yang Terhubung:${C_RESET}"
+        show_clients "$target_iface"
+    else
+        echo -e "  State      : ${C_RED}○ TIDAK AKTIF (STOPPED)${C_RESET}"
+        echo -e "\nUntuk menyalakan hotspot, jalankan:"
+        echo -e "  ${C_CYAN}hotspot start${C_RESET}"
+    fi
+}
+
+
+json_status() {
+    load_config
+    local target_iface
+    target_iface=$(detect_aic8800 || echo "wlan1")
+    local internet_iface
+    internet_iface=$(detect_intel_pcie || echo "wlan0")
+    local active=false
+    local ip_addr=""
+    local cur_ssid="$SSID"
+    local freq_info=""
+    local clients_json="[]"
+
+    if is_hotspot_active "$target_iface"; then
+        active=true
+        cur_ssid=$(nmcli -t -f 802-11-wireless.ssid connection show "$CON_NAME" 2>/dev/null | cut -d: -f2 || echo "$SSID")
+        ip_addr=$(ip -4 addr show dev "$target_iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1 || echo "10.42.0.1")
+        freq_info=$(iw dev "$target_iface" info 2>/dev/null | grep -oP 'channel \d+ \(\d+ MHz\)' || echo "N/A")
+
+        local clients
+        clients=$(iw dev "$target_iface" station dump 2>/dev/null || true)
+        if [[ -n "$clients" ]]; then
+            local client_items=()
+            local current_mac=""
+            local signal="-"
+            local tx_bitrate="-"
+
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^Station\ ([0-9a-fA-F:]{17}) ]]; then
+                    if [[ -n "$current_mac" ]]; then
+                        local ip
+                        ip=$(ip neigh show dev "$target_iface" 2>/dev/null | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
+                        [[ -z "$ip" ]] && ip="DHCP"
+                        client_items+=("{\"mac\":\"$current_mac\",\"ip\":\"$ip\",\"signal\":\"$signal\",\"tx_bitrate\":\"$tx_bitrate\"}")
+                    fi
+                    current_mac="${BASH_REMATCH[1]}"
+                    signal="-"
+                    tx_bitrate="-"
+                elif [[ "$line" =~ signal:[[:space:]]*([+-]?[0-9]+[[:space:]]*dBm) ]]; then
+                    signal="${BASH_REMATCH[1]}"
+                elif [[ "$line" =~ tx\ bitrate:[[:space:]]*([0-9.]+[[:space:]]*[A-Za-z/]+) ]]; then
+                    tx_bitrate="${BASH_REMATCH[1]}"
+                fi
+            done <<< "$clients"
+
+            if [[ -n "$current_mac" ]]; then
+                local ip
+                ip=$(ip neigh show dev "$target_iface" 2>/dev/null | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
+                [[ -z "$ip" ]] && ip="DHCP"
+                client_items+=("{\"mac\":\"$current_mac\",\"ip\":\"$ip\",\"signal\":\"$signal\",\"tx_bitrate\":\"$tx_bitrate\"}")
+            fi
+
+            if [[ ${#client_items[@]} -gt 0 ]]; then
+                local IFS=","
+                clients_json="[${client_items[*]}]"
+            fi
+        fi
+    fi
+
+    cat <<EOF
+{
+  "active": $active,
+  "iface": "$target_iface",
+  "internet_iface": "$internet_iface",
+  "ssid": "$cur_ssid",
+  "password": "$PASSWORD",
+  "band": "$BAND",
+  "channel": "$CHANNEL",
+  "gateway_ip": "$ip_addr",
+  "freq_info": "$freq_info",
+  "clients": $clients_json
+}
+EOF
+}
+
+show_clients() {
+    local iface="$1"
+    local clients
+    clients=$(iw dev "$iface" station dump 2>/dev/null || true)
+
+    if [[ -z "$clients" ]]; then
+        echo -e "  ${C_DIM}(Belum ada perangkat yang terhubung)${C_RESET}"
+        return 0
+    fi
+
+    printf "  %-17s  %-15s  %-10s  %-12s\n" "MAC Address" "IP Address" "Signal" "TX Bitrate"
+    printf "  %-17s  %-15s  %-10s  %-12s\n" "-----------------" "---------------" "----------" "------------"
+
+    local current_mac=""
+    local signal=""
+    local tx_bitrate=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^Station\ ([0-9a-fA-F:]{17}) ]]; then
+            if [[ -n "$current_mac" ]]; then
+                local ip
+                ip=$(ip neigh show dev "$iface" | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
+                [[ -z "$ip" ]] && ip="DHCP"
+                printf "  %-17s  %-15s  %-10s  %-12s\n" "$current_mac" "$ip" "$signal" "$tx_bitrate"
+            fi
+            current_mac="${BASH_REMATCH[1]}"
+            signal="-"
+            tx_bitrate="-"
+        elif [[ "$line" =~ signal:[[:space:]]*([+-]?[0-9]+[[:space:]]*dBm) ]]; then
+            signal="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ tx\ bitrate:[[:space:]]*([0-9.]+[[:space:]]*[A-Za-z/]+) ]]; then
+            tx_bitrate="${BASH_REMATCH[1]}"
+        fi
+    done <<< "$clients"
+
+    if [[ -n "$current_mac" ]]; then
+        local ip
+        ip=$(ip neigh show dev "$iface" | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
+        [[ -z "$ip" ]] && ip="DHCP"
+        printf "  %-17s  %-15s  %-10s  %-12s\n" "$current_mac" "$ip" "$signal" "$tx_bitrate"
+    fi
+}
+
+check_firewall_quiet() {
+    if systemctl is-active --quiet ufw 2>/dev/null; then
+        local fwd_policy
+        fwd_policy=$(grep -oP '^DEFAULT_FORWARD_POLICY="\K[^"]+' /etc/default/ufw 2>/dev/null || true)
+        if [[ "$fwd_policy" == "DROP" ]]; then
+            echo -e "\n${C_YELLOW}Catatan Firewall (UFW Aktif):${C_RESET}"
+            echo -e "Jika perangkat di HP/Laptop bisa connect tapi ${C_RED}tidak ada internet${C_RESET},"
+            echo -e "izinkan forward routing di UFW dengan menjalankan sekali:"
+            echo -e "  ${C_CYAN}sudo ufw route allow in on $(detect_aic8800) out on $(detect_intel_pcie)${C_RESET}"
+            echo -e "  ${C_CYAN}sudo ufw allow in on $(detect_aic8800)${C_RESET}"
+        fi
+    fi
+}
+
+check_firewall() {
+    banner
+    echo -e "${C_BOLD}Pemeriksaan Routing & Firewall:${C_RESET}\n"
+
+    local aic_iface
+    aic_iface=$(detect_aic8800 || echo "wlan1")
+    local pcie_iface
+    pcie_iface=$(detect_intel_pcie || echo "wlan0")
+
+    echo -e "1. Interface Hotspot  : ${C_CYAN}${aic_iface}${C_RESET}"
+    echo -e "2. Interface Internet : ${C_CYAN}${pcie_iface}${C_RESET}"
+
+    if systemctl is-active --quiet ufw 2>/dev/null; then
+        echo -e "\n${C_YELLOW}[!] UFW Firewall terdeteksi aktif.${C_RESET}"
+        local fwd_policy
+        fwd_policy=$(grep -oP '^DEFAULT_FORWARD_POLICY="\K[^"]+' /etc/default/ufw 2>/dev/null || true)
+        echo -e "    DEFAULT_FORWARD_POLICY = ${fwd_policy}"
+        echo -e "\nJika HP dapat IP tetapi tidak bisa browsing, jalankan perintah ini:"
+        echo -e "  ${C_CYAN}sudo ufw route allow in on ${aic_iface} out on ${pcie_iface}${C_RESET}"
+        echo -e "  ${C_CYAN}sudo ufw allow in on ${aic_iface}${C_RESET}"
+        echo -e "  ${C_CYAN}sudo ufw reload${C_RESET}"
+    else
+        echo -e "\n${C_GREEN}[✓] UFW tidak memblokir (inactive).${C_RESET}"
+    fi
+}
+
+show_help() {
+    banner
+    echo -e "${C_BOLD}Penggunaan:${C_RESET}"
+    echo -e "  hotspot <perintah> [opsi]\n"
+    echo -e "${C_BOLD}Perintah Utama:${C_RESET}"
+    echo -e "  ${C_CYAN}start${C_RESET}                 Nyalakan hotspot AP di USB AIC8800"
+    echo -e "  ${C_CYAN}stop${C_RESET}                  Matikan hotspot AP"
+    echo -e "  ${C_CYAN}restart${C_RESET}               Restart hotspot AP"
+    echo -e "  ${C_CYAN}status${C_RESET}                Lihat status hotspot dan klien yang tersambung"
+    echo -e "  ${C_CYAN}clients${C_RESET}               Lihat daftar perangkat (HP/Laptop) yang connect"
+    echo -e "  ${C_CYAN}qr${C_RESET}                    Tampilkan QR Code untuk scan langsung dari HP"
+    echo -e "  ${C_CYAN}check${C_RESET}                 Cek status routing dan UFW firewall"
+    echo -e "  ${C_CYAN}config${C_RESET}                Lihat konfigurasi saat ini"
+    echo -e "  ${C_CYAN}help${C_RESET}                  Tampilkan panduan ini\n"
+    echo -e "${C_BOLD}Opsi untuk 'start':${C_RESET}"
+    echo -e "  ${C_CYAN}-s, --ssid <nama>${C_RESET}     Ganti nama SSID hotspot sementara"
+    echo -e "  ${C_CYAN}-p, --pass <kata_sandi>${C_RESET} Password Wi-Fi (minimal 8 karakter)"
+    echo -e "  ${C_CYAN}-b, --band <2.4|5>${C_RESET}    Frekuensi band (2.4 atau 5 GHz, default: 2.4)"
+    echo -e "  ${C_CYAN}-c, --channel <no>${C_RESET}    Nomor channel (misal: 1, 6, 11, atau 36)"
+    echo -e "  ${C_CYAN}--save${C_RESET}                Simpan opsi ke konfigurasi permanen\n"
+    echo -e "${C_BOLD}Contoh:${C_RESET}"
+    echo -e "  hotspot start"
+    echo -e "  hotspot start -s \"HotspotSaya\" -p \"12345678\" -b 5"
+    echo -e "  hotspot start -s \"Kantor-2G\" -p \"kantor123\" --save"
+    echo -e "  hotspot status"
+    echo -e "  hotspot stop\n"
+}
+
+# ------------------------------------------------------------------------------
+# Entrypoint & CLI Parsing
+# ------------------------------------------------------------------------------
+
+ACTION="${1:-help}"
+shift || true
+
+load_config
+
+SAVE_OPT=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -s|--ssid)
+            SSID="$2"
+            shift 2
+            ;;
+        -p|--pass|--password)
+            PASSWORD="$2"
+            shift 2
+            ;;
+        -b|--band)
+            BAND="$2"
+            shift 2
+            ;;
+        -c|--channel)
+            CHANNEL="$2"
+            shift 2
+            ;;
+        --save)
+            SAVE_OPT=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo -e "${C_RED}Opsi tidak dikenal: $1${C_RESET}"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$SAVE_OPT" == "true" ]]; then
+    save_config
+    echo -e "${C_GREEN}✓ Pengaturan berhasil disimpan ke ${CONFIG_FILE}${C_RESET}"
+fi
+
+case "$ACTION" in
+    start)
+        start_hotspot
+        ;;
+    stop)
+        stop_hotspot
+        ;;
+    restart)
+        restart_hotspot
+        ;;
+    status)
+        status_hotspot
+        ;;
+    status-json|json)
+        json_status
+        ;;
+    clients|devices)
+        target_iface=$(detect_aic8800 || echo "wlan1")
+        echo -e "${C_BOLD}Daftar Perangkat Terhubung (${target_iface}):${C_RESET}"
+        show_clients "$target_iface"
+        ;;
+    qr)
+        load_config
+        banner
+        echo -e "SSID     : ${C_BOLD}${SSID}${C_RESET}"
+        echo -e "Password : ${C_BOLD}${PASSWORD}${C_RESET}"
+        show_qr "$SSID" "$PASSWORD"
+        ;;
+    config)
+        banner
+        echo -e "${C_BOLD}File Konfigurasi:${C_RESET} ${C_CYAN}${CONFIG_FILE}${C_RESET}\n"
+        echo -e "  SSID     : ${C_GREEN}${SSID}${C_RESET}"
+        echo -e "  Password : ${C_GREEN}${PASSWORD}${C_RESET}"
+        echo -e "  Band     : ${C_GREEN}${BAND} GHz${C_RESET}"
+        echo -e "  Channel  : ${C_GREEN}${CHANNEL}${C_RESET}"
+        echo -e "\nUntuk mengubah permanen:"
+        echo -e "  ${C_CYAN}hotspot start -s <SSID> -p <Password> -b <2.4|5> --save${C_RESET}"
+        echo -e "atau edit langsung file ${CONFIG_FILE}"
+        ;;
+    check|firewall)
+        check_firewall
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        echo -e "${C_RED}Perintah '${ACTION}' tidak dikenal.${C_RESET}\n"
+        show_help
+        exit 1
+        ;;
+esac

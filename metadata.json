@@ -1,0 +1,18 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Yanuar Budi"
+            }
+        ],
+        "Category": "Network",
+        "Description": "Controller Hotspot Wi-Fi AIC8800 untuk KDE Plasma 6",
+        "Icon": "network-wireless-hotspot",
+        "Id": "org.cachyos.hotspot-aic8800",
+        "License": "GPL-3.0+",
+        "Name": "Hotspot AIC8800",
+        "Version": "1.0.0"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
