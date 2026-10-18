@@ -1,108 +1,112 @@
 # Hotspot AIC8800 — KDE Plasma 6 Widget & CLI
 
-Plasmoid KDE Plasma 6 dan tool CLI untuk mempermudah pembuatan Wi-Fi hotspot saat menggunakan 2 adapter Wi-Fi di Linux.
+Bahasa / Language: [**English**](README.md) | [**Indonesia**](README_ID.md)
 
-Proyek ini dibuat untuk skenario dual-adapter:
-- **Adapter Utama (Intel / PCIe):** Terhubung ke internet sebagai koneksi upstream.
-- **Adapter Kedua (AIC8800 USB):** Menyiarkan hotspot (Access Point) untuk perangkat lain.
+KDE Plasma 6 plasmoid and CLI tool that makes it easy to create a Wi-Fi hotspot when using two Wi-Fi adapters on Linux.
 
-Tool ini menangani deteksi antarmuka otomatis, konfigurasi profil Access Point via NetworkManager, parameter kompatibilitas driver (penguncian channel 6 dan WPA2-PSK murni agar stabil pada chip AIC8800), serta kontrol cepat lewat panel system tray KDE Plasma 6 atau command line.
+This project is designed for the dual-adapter scenario:
+- **Main Adapter (Intel / PCIe):** Connected to the internet as the upstream connection.
+- **Second Adapter (AIC8800 USB):** Broadcasts the hotspot (Access Point) for other devices.
 
-## Fitur
+The tool handles automatic interface detection, Access Point profile configuration via NetworkManager, driver compatibility parameters (channel 6 locking and pure WPA2-PSK for AIC8800 chip stability), and quick control via the KDE Plasma 6 system tray panel or command line.
 
-### Widget KDE Plasma 6
-- Toggle on/off hotspot langsung dari system tray.
-- Monitoring client terhubung secara real-time (jumlah perangkat, IP, MAC address, signal strength, bitrate).
-- Pengaturan SSID, password, band (2.4 / 5 GHz), dan channel langsung dari antarmuka GUI.
-- Shortcut untuk menampilkan QR Code Wi-Fi dan memeriksa status routing/firewall.
+## Features
+
+### KDE Plasma 6 Widget
+- Toggle hotspot on/off directly from the system tray.
+- Real-time connected client monitoring (device count, IP, MAC address, signal strength, bitrate).
+- Connected device count badge with a pulse ring animation while the hotspot is active.
+- SSID, password, band (2.4 / 5 GHz), and channel settings directly from the GUI.
+- Wi-Fi QR Code displayed directly inside the widget (no terminal) for quick scan-to-connect from a phone.
+- Shortcut to check routing/firewall status.
 
 ### CLI (`hotspot`)
-- `hotspot start`: Menyalakan hotspot (mendukung opsi kustom: `-s`, `-p`, `-b`, `-c`, `--save`).
-- `hotspot stop`: Mematikan hotspot.
-- `hotspot restart`: Memulai ulang koneksi hotspot.
-- `hotspot status`: Menampilkan status koneksi, adapter aktif, dan detail konfigurasi AP.
-- `hotspot clients`: Menampilkan daftar perangkat yang terhubung via `iw`.
-- `hotspot qr`: Menampilkan QR Code di terminal untuk scan koneksi cepat dari ponsel.
-- `hotspot check`: Memeriksa konfigurasi IP forwarding dan firewall (UFW).
-- `hotspot config`: Membaca file konfigurasi tersimpan.
-- `hotspot json`: Mengeluarkan status dalam format JSON untuk widget atau integrasi skrip.
+- `hotspot start`: Turn on the hotspot (supports custom options: `-s`, `-p`, `-b`, `-c`, `--save`).
+- `hotspot stop`: Turn off the hotspot.
+- `hotspot restart`: Restart the hotspot connection.
+- `hotspot status`: Show connection status, active adapters, and AP configuration details.
+- `hotspot clients`: List devices connected via `iw`.
+- `hotspot qr`: Display the QR Code in the terminal for quick scan-to-connect from a phone.
+- `hotspot check`: Check IP forwarding and firewall (UFW) configuration.
+- `hotspot config`: Read the saved configuration file.
+- `hotspot json`: Output status in JSON format for the widget or script integration.
 
-## Prasyarat
+## Requirements
 
-- Distro Linux berbasis Arch (CachyOS, Arch Linux) dengan KDE Plasma 6.
-- `NetworkManager` sebagai network stack aktif.
-- Dua adapter Wi-Fi aktif:
-  - Adapter internet (misal: Intel AX210 / PCIe).
-  - Adapter hotspot (AIC8800 USB dengan driver `aic8800_fdrv`).
+- Arch-based Linux distro (CachyOS, Arch Linux) with KDE Plasma 6.
+- `NetworkManager` as the active network stack.
+- Two active Wi-Fi adapters:
+  - Internet adapter (e.g., Intel AX210 / PCIe).
+  - Hotspot adapter (AIC8800 USB with the `aic8800_fdrv` driver).
 
-Paket dependensi:
+Package dependencies:
 - `networkmanager`
 - `plasma5support`
 - `qrencode`
 - `iw`
 
-## Instalasi
+## Installation
 
-Jalankan script installer:
+Run the installer script:
 
 ```bash
-git clone https://github.com/YanuarBF/hotspot-plasmoid.git
+git clone https://github.com/MYanuarBF/hotspot-plasmoid.git
 cd hotspot-plasmoid
 bash install.sh
 ```
 
-Proses instalasi:
-1. Memeriksa dan menginstal paket dependensi (`plasma5support`, `qrencode`, `iw`).
-2. Memasang executable `hotspot` ke `~/.local/bin/`.
-3. Memasang widget Plasmoid ke `~/.local/share/plasma/plasmoids/org.cachyos.hotspot-aic8800`.
-4. Memperbarui cache KDE Plasma (`kbuildsycoca6`).
+The installation process:
+1. Checks and installs package dependencies (`plasma5support`, `qrencode`, `iw`).
+2. Installs the `hotspot` executable to `~/.local/bin/`.
+3. Installs the plasmoid widget to `~/.local/share/plasma/plasmoids/org.cachyos.hotspot-aic8800`.
+4. Refreshes the KDE Plasma cache (`kbuildsycoca6`).
 
-### Memasang Widget ke Panel
-1. Klik kanan pada panel taskbar KDE Plasma, pilih **Add or Manage Widgets...**.
-2. Cari **Hotspot AIC8800**.
-3. Tarik widget ke posisi panel yang diinginkan.
-4. Jika widget belum muncul dalam daftar, restart plasmashell:
+### Adding the Widget to the Panel
+1. Right-click the KDE Plasma taskbar panel, choose **Add or Manage Widgets...**.
+2. Search for **Hotspot AIC8800**.
+3. Drag the widget to the desired panel position.
+4. If the widget does not appear in the list, restart plasmashell:
    ```bash
    systemctl --user restart plasma-plasmashell
    ```
 
-## Penggunaan CLI
+## CLI Usage
 
 ```bash
-# Menyalakan hotspot dengan konfigurasi tersimpan atau default
+# Turn on the hotspot with saved configuration or defaults
 hotspot start
 
-# Menyalakan dengan SSID dan password kustom
-hotspot start -s "HotspotSaya" -p "password123"
+# Turn on with custom SSID and password
+hotspot start -s "MyHotspot" -p "password123"
 
-# Menyalakan di frekuensi 5 GHz channel 36
-hotspot start -s "Kantor-5G" -p "kantor123" -b 5 -c 36
+# Turn on at 5 GHz frequency, channel 36
+hotspot start -s "Office-5G" -p "office123" -b 5 -c 36
 
-# Menyimpan konfigurasi secara permanen
-hotspot start -s "Rumah" -p "rahasia123" --save
+# Save the configuration permanently
+hotspot start -s "Home" -p "secret123" --save
 
-# Memeriksa status dan client aktif
+# Check status and active clients
 hotspot status
 
-# Mematikan hotspot
+# Turn off the hotspot
 hotspot stop
 
-# Menampilkan QR code
+# Display the QR code
 hotspot qr
 ```
 
-### Argumen CLI
-| Opsi | Keterangan |
-|------|------------|
-| `-s, --ssid <nama>` | Nama SSID hotspot |
-| `-p, --pass <sandi>` | Password WPA2-PSK (minimal 8 karakter) |
-| `-b, --band <2.4\|5>` | Frekuensi band (`2.4` atau `5`) |
-| `-c, --channel <no>` | Nomor channel Wi-Fi |
-| `--save` | Simpan opsi yang diberikan ke file konfigurasi |
+### CLI Arguments
+| Option | Description |
+|--------|-------------|
+| `-s, --ssid <name>` | Hotspot SSID name |
+| `-p, --pass <pass>` | WPA2-PSK password (min. 8 characters) |
+| `-b, --band <2.4\|5>` | Frequency band (`2.4` or `5`) |
+| `-c, --channel <no>` | Wi-Fi channel number |
+| `--save` | Save the given options to the configuration file |
 
-## Konfigurasi
+## Configuration
 
-File konfigurasi tersimpan di `~/.config/hotspot-aic8800/config`:
+The configuration file is saved at `~/.config/hotspot-aic8800/config`:
 
 ```bash
 SSID="AIC8800-Hotspot"
@@ -111,44 +115,44 @@ BAND="2.4"
 CHANNEL="6"
 ```
 
-## Cara Kerja
+## How It Works
 
-1. **Deteksi Interface:** Script mendeteksi adapter USB AIC8800 via Vendor/Product ID (`368b:8d81`) atau modul `aic8800`, serta mengidentifikasi adapter upstream (Intel PCI ID `0x8086` atau interface nirkabel yang sedang tersambung).
-2. **Setup NetworkManager:** Membuat koneksi bertipe `wifi` dengan mode `ap` bernama `Hotspot-AIC8800` menggunakan `nmcli`. Konfigurasi dikunci ke channel 6 dan enkripsi WPA2-PSK CCMP murni guna menghindari kendala auto-channel 13 atau handshake WPA3-SAE pada chipset AIC8800.
-3. **Integrasi Plasmoid:** Widget QML mengeksekusi `hotspot json` secara periodik via `Plasma5Support.DataSource` untuk membaca telemetri hotspot dan daftar perangkat tanpa memerlukan privilege root.
+1. **Interface Detection:** The script detects the AIC8800 USB adapter via Vendor/Product ID (`368b:8d81`) or the `aic8800` module, and identifies the upstream adapter (Intel PCI ID `0x8086` or the wireless interface currently connected).
+2. **NetworkManager Setup:** Creates a `wifi` connection in `ap` mode named `Hotspot-AIC8800` using `nmcli`. The configuration is locked to channel 6 and pure WPA2-PSK CCMP encryption to avoid auto-channel 13 issues or WPA3-SAE handshake problems on the AIC8800 chipset.
+3. **Plasmoid Integration:** The QML widget periodically executes `hotspot json` via `Plasma5Support.DataSource` to read hotspot telemetry and the device list without requiring root privileges.
 
-## Pemecahan Masalah
+## Troubleshooting
 
-### Client terhubung tetapi tidak ada akses internet
-Pastikan IPv4 forwarding aktif pada kernel:
+### Client connected but no internet access
+Make sure IPv4 forwarding is enabled in the kernel:
 ```bash
 sudo sysctl -w net.ipv4.ip_forward=1
 echo "net.ipv4.ip_forward=1" | sudo tee /etc/sysctl.d/99-ipforward.conf
 ```
 
-Jika firewall UFW aktif, izinkan routing antar adapter:
+If UFW firewall is active, allow routing between adapters:
 ```bash
 hotspot check
 sudo ufw route allow in on wlan1 out on wlan0
 sudo ufw allow in on wlan1
 sudo ufw reload
 ```
-*(Ganti `wlan1` dengan interface AIC8800 dan `wlan0` dengan interface internet Anda).*
+*(Replace `wlan1` with your AIC8800 interface and `wlan0` with your internet interface).*
 
-### Perangkat client gagal terhubung atau reconnect terus-menerus
-Driver AIC8800 kerap gagal saat auto-channel memilih channel 13 atau saat menegosiasikan WPA3. Script ini secara default menetapkan channel 6 dan WPA2-PSK murni. Jika interferensi tinggi di channel 6, alihkan ke channel 1 atau 11:
+### Client devices fail to connect or keep reconnecting
+The AIC8800 driver often fails when auto-channel picks channel 13 or when negotiating WPA3. This script sets channel 6 and pure WPA2-PSK by default. If interference is high on channel 6, switch to channel 1 or 11:
 ```bash
 hotspot start -c 1 --save
 ```
 
-### Adapter AIC8800 tidak terdeteksi
-Pastikan modul kernel `aic8800_fdrv` dimuat dan perangkat USB dikenali sistem:
+### AIC8800 adapter not detected
+Make sure the `aic8800_fdrv` kernel module is loaded and the USB device is recognized by the system:
 ```bash
 lsusb | grep 368b
 lsmod | grep aic8800
 ```
 
-## Lisensi
+## License
 
 GPL-3.0-or-later
 
