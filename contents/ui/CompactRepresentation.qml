@@ -57,17 +57,17 @@ MouseArea {
         running: root.isLoading
     }
 
-    // --- Badge jumlah client — pojok kiri-atas (tidak bentrok notif sistem) ---
+    // --- Badge jumlah client — pojok kanan-bawah ---
     Rectangle {
         id: clientBadge
         visible: root.isActive && root.clients.length > 0 && !root.isLoading
-        anchors.top:  parent.top
-        anchors.left: parent.left
-        anchors.topMargin:  0
-        anchors.leftMargin: 0
+        anchors.bottom: parent.bottom
+        anchors.right:  parent.right
+        anchors.bottomMargin: 0
+        anchors.rightMargin:  0
 
-        width:  Math.max(Kirigami.Units.gridUnit, badgeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2)
-        height: Kirigami.Units.gridUnit
+        width:  Math.max(Kirigami.Units.gridUnit * 0.7, badgeLabel.implicitWidth + Kirigami.Units.smallSpacing)
+        height: Kirigami.Units.gridUnit * 0.7
         radius: height / 2
         color:  Kirigami.Theme.highlightColor
 
@@ -78,7 +78,7 @@ MouseArea {
             id: badgeLabel
             anchors.centerIn: parent
             text: root.clients.length
-            font.pixelSize: Math.max(9, Kirigami.Units.gridUnit * 0.52)
+            font.pixelSize: Math.max(7, Kirigami.Units.gridUnit * 0.36)
             font.bold: true
             color: Kirigami.Theme.highlightedTextColor
         }

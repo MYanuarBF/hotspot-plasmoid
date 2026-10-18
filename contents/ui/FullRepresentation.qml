@@ -43,8 +43,8 @@ Item {
 
                 PlasmaComponents.Label {
                     text: root.isActive 
-                          ? (i18n("Aktif (") + root.iface + i18n(")") + (root.clients.length > 0 ? (" • " + root.clients.length + i18n(" perangkat")) : ""))
-                          : i18n("Tidak Aktif")
+                          ? (i18n("Active (") + root.iface + i18n(")") + (root.clients.length > 0 ? (" • " + root.clients.length + i18n(" device(s)")) : ""))
+                          : i18n("Inactive")
                     font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                     opacity: 0.7
                 }
@@ -90,7 +90,7 @@ Item {
 
                     PlasmaComponents.Label {
                         anchors.centerIn: parent
-                        text: i18n("Hotspot sedang nonaktif.\nNyalakan switch di atas untuk menyiarkan Wi-Fi.")
+                        text: i18n("Hotspot is inactive.\nTurn on the switch above to broadcast Wi-Fi.")
                         horizontalAlignment: Text.AlignHCenter
                         opacity: 0.6
                         font.italic: true
@@ -126,7 +126,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.smallSpacing
                         PlasmaComponents.Label {
-                            text: root.password ? root.password : i18n("(Tanpa Password)")
+                            text: root.password ? root.password : i18n("(No Password)")
                             font.family: "Monospace"
                         }
                     }
@@ -142,7 +142,7 @@ Item {
                     }
 
                     PlasmaComponents.Label {
-                        text: i18n("Frekuensi:")
+                        text: i18n("Frequency:")
                         font.bold: true
                         opacity: 0.8
                     }
@@ -155,7 +155,7 @@ Item {
 
         // --- Client List Section ---
         PlasmaComponents.Label {
-            text: i18n("Perangkat Terhubung (") + root.clients.length + ")"
+            text: i18n("Connected Devices (") + root.clients.length + ")"
             font.bold: true
         }
 
@@ -183,7 +183,7 @@ Item {
                         anchors.fill: parent
                         PlasmaComponents.Label {
                             anchors.centerIn: parent
-                            text: root.isActive ? i18n("Belum ada perangkat tersambung.") : i18n("Hotspot tidak aktif.")
+                            text: root.isActive ? i18n("No devices connected yet.") : i18n("Hotspot is inactive.")
                             opacity: 0.5
                             font.italic: true
                         }
@@ -247,7 +247,7 @@ Item {
                 spacing: Kirigami.Units.smallSpacing
 
                 PlasmaComponents.Label {
-                    text: i18n("Pengaturan Hotspot:")
+                    text: i18n("Hotspot Settings:")
                     font.bold: true
                 }
 
@@ -301,7 +301,7 @@ Item {
                 }
 
                 PlasmaComponents.Button {
-                    text: i18n("Simpan & Terapkan")
+                    text: i18n("Save & Apply")
                     icon.name: "dialog-ok-apply"
                     Layout.alignment: Qt.AlignRight
                     onClicked: {
@@ -333,7 +333,7 @@ Item {
             }
 
             PlasmaComponents.Button {
-                text: fullRoot.showConfig ? i18n("Tutup") : i18n("Setting")
+                text: fullRoot.showConfig ? i18n("Close") : i18n("Settings")
                 icon.name: "configure"
                 Layout.fillWidth: true
                 onClicked: fullRoot.showConfig = !fullRoot.showConfig

@@ -23,8 +23,8 @@ PlasmoidItem {
     property var clients: []
 
     preferredRepresentation: compactRepresentation
-    toolTipMainText: isActive ? (i18n("Hotspot Aktif: ") + ssid) : i18n("Hotspot Mati")
-    toolTipSubText: isActive ? (clients.length + i18n(" perangkat tersambung • ") + gatewayIp) : i18n("Klik untuk mengelola")
+    toolTipMainText: isActive ? (i18n("Hotspot Active: ") + ssid) : i18n("Hotspot Off")
+    toolTipSubText: isActive ? (clients.length + i18n(" device(s) connected • ") + gatewayIp) : i18n("Click to manage")
 
     // Plasma5Support executable engine to run shell commands
     Plasma5Support.DataSource {
