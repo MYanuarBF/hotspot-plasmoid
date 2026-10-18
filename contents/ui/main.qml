@@ -21,6 +21,7 @@ PlasmoidItem {
     property string gatewayIp: ""
     property string freqInfo: ""
     property var clients: []
+    property string qrImagePath: ""
 
     preferredRepresentation: compactRepresentation
     toolTipMainText: isActive ? (i18n("Hotspot Active: ") + ssid) : i18n("Hotspot Off")
@@ -57,6 +58,8 @@ PlasmoidItem {
                 }
             } else if (sourceName.indexOf("start") !== -1 || sourceName.indexOf("stop") !== -1 || sourceName.indexOf("restart") !== -1) {
                 pollTimer.restart();
+            } else if (stdout.indexOf("/tmp/hotspot-qr.png") !== -1) {
+                root.qrImagePath = "file:///tmp/hotspot-qr.png?" + Date.now();
             }
         }
 
@@ -85,7 +88,8 @@ PlasmoidItem {
     }
 
     function showQr() {
-        executable.run("konsole -e bash -c 'hotspot qr; echo; read -p \"Tekan Enter untuk menutup...\"'");
+        var wifi = "WIFI:T:" + (root.password ? "WPA" : "nopass") + ";S:" + root.ssid + ";P:" + root.password + ";;"
+        executable.run("qrencode -t PNG -s 6 -o /tmp/hotspot-qr.png '" + wifi + "' && echo /tmp/hotspot-qr.png")
     }
 
     function checkFirewall() {

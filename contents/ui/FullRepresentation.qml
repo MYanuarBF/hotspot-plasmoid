@@ -14,6 +14,7 @@ Item {
     Layout.preferredHeight: Kirigami.Units.gridUnit * 28
 
     property bool showConfig: false
+    property bool showQr: false
 
     ColumnLayout {
         anchors.fill: parent
@@ -322,7 +323,15 @@ Item {
                 text: i18n("QR Code")
                 icon.name: "view-barcode-qr"
                 Layout.fillWidth: true
-                onClicked: root.showQr()
+                onClicked: {
+                    if (fullRoot.showQr) {
+                        fullRoot.showQr = false
+                    } else {
+                        root.qrImagePath = ""
+                        root.showQr()
+                        fullRoot.showQr = true
+                    }
+                }
             }
 
             PlasmaComponents.Button {
@@ -347,5 +356,82 @@ Item {
                 PlasmaComponents.ToolTip.visible: hovered
             }
         }
+    // --- QR Overlay (fullscreen panel) ---
+    Rectangle {
+        anchors.fill: parent
+        visible: fullRoot.showQr
+        color: Kirigami.Theme.backgroundColor
+        radius: Kirigami.Units.smallSpacing
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: Kirigami.Units.largeSpacing
+            spacing: Kirigami.Units.mediumSpacing
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                PlasmaComponents.Label {
+                    text: i18n("Scan to Connect")
+                    font.bold: true
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.15
+                    Layout.fillWidth: true
+                }
+
+                PlasmaComponents.ToolButton {
+                    icon.name: "dialog-close"
+                    onClicked: fullRoot.showQr = false
+                    PlasmaComponents.ToolTip.text: i18n("Close")
+                    PlasmaComponents.ToolTip.visible: hovered
+                }
+            }
+
+            Kirigami.Separator {
+                Layout.fillWidth: true
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                PlasmaComponents.BusyIndicator {
+                    anchors.centerIn: parent
+                    visible: root.qrImagePath === ""
+                    running: root.qrImagePath === ""
+                }
+
+                Image {
+                    anchors.centerIn: parent
+                    source: root.qrImagePath
+                    visible: root.qrImagePath !== ""
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -Kirigami.Units.smallSpacing
+                        color: "white"
+                        radius: Kirigami.Units.smallSpacing
+                        z: -1
+                    }
+                }
+            }
+
+            PlasmaComponents.Label {
+                text: root.ssid
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                Layout.fillWidth: true
+            }
+
+            PlasmaComponents.Label {
+                text: root.password ? i18n("Password: ") + root.password : i18n("(No Password)")
+                font.family: "Monospace"
+                opacity: 0.7
+                horizontalAlignment: Text.AlignHCenter
+                Layout.fillWidth: true
+            }
+        }
     }
+}
 }
