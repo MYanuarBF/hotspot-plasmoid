@@ -14,7 +14,7 @@ The tool handles automatic interface detection, Access Point profile configurati
 
 ### KDE Plasma 6 Widget
 - Toggle hotspot on/off directly from the system tray.
-- Real-time connected client monitoring (device count, IP, MAC address, signal strength, bitrate).
+- Real-time connected client monitoring (device name, IP, MAC address, signal strength, bitrate).
 - Connected device count badge with a pulse ring animation while the hotspot is active.
 - SSID, password, band (2.4 / 5 GHz), and channel settings directly from the GUI.
 - Wi-Fi QR Code displayed directly inside the widget (no terminal) for quick scan-to-connect from a phone.
@@ -25,7 +25,7 @@ The tool handles automatic interface detection, Access Point profile configurati
 - `hotspot stop`: Turn off the hotspot.
 - `hotspot restart`: Restart the hotspot connection.
 - `hotspot status`: Show connection status, active adapters, and AP configuration details.
-- `hotspot clients`: List devices connected via `iw`.
+- `hotspot clients`: List connected devices with hostname, IP, MAC, signal, and bitrate.
 - `hotspot qr`: Display the QR Code in the terminal for quick scan-to-connect from a phone.
 - `hotspot check`: Check IP forwarding and firewall (UFW) configuration.
 - `hotspot config`: Read the saved configuration file.

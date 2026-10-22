@@ -14,7 +14,7 @@ Tool ini menangani deteksi antarmuka otomatis, konfigurasi profil Access Point v
 
 ### Widget KDE Plasma 6
 - Toggle on/off hotspot langsung dari system tray.
-- Monitoring client terhubung secara real-time (jumlah perangkat, IP, MAC address, signal strength, bitrate).
+- Monitoring client terhubung secara real-time (nama perangkat, IP, MAC address, signal strength, bitrate).
 - Badge jumlah perangkat tersambung dengan animasi pulse ring saat hotspot aktif.
 - Pengaturan SSID, password, band (2.4 / 5 GHz), dan channel langsung dari antarmuka GUI.
 - QR Code Wi-Fi ditampilkan langsung di dalam widget (tanpa buka terminal) untuk scan koneksi cepat dari ponsel.
@@ -25,7 +25,7 @@ Tool ini menangani deteksi antarmuka otomatis, konfigurasi profil Access Point v
 - `hotspot stop`: Mematikan hotspot.
 - `hotspot restart`: Memulai ulang koneksi hotspot.
 - `hotspot status`: Menampilkan status koneksi, adapter aktif, dan detail konfigurasi AP.
-- `hotspot clients`: Menampilkan daftar perangkat yang terhubung via `iw`.
+- `hotspot clients`: Menampilkan daftar perangkat terhubung beserta hostname, IP, MAC, signal, dan bitrate.
 - `hotspot qr`: Menampilkan QR Code di terminal untuk scan koneksi cepat dari ponsel.
 - `hotspot check`: Memeriksa konfigurasi IP forwarding dan firewall (UFW).
 - `hotspot config`: Membaca file konfigurasi tersimpan.

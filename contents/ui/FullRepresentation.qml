@@ -62,12 +62,39 @@ Item {
                 id: mainSwitch
                 checked: root.isActive
                 enabled: !root.isLoading
-                onToggled: root.toggleHotspot()
+                // onClicked hanya dipanggil untuk aksi user; onToggled juga
+                // terpicu saat polling status mengubah `checked`, yang dulu
+                // mengirim stop tepat setelah start.
+                onClicked: {
+                    if (checked !== root.isActive)
+                        root.toggleHotspot();
+                }
             }
         }
 
         Kirigami.Separator {
             Layout.fillWidth: true
+        }
+
+        // --- Error banner ---
+        Rectangle {
+            visible: root.lastError !== ""
+            Layout.fillWidth: true
+            implicitHeight: errLabel.implicitHeight + Kirigami.Units.mediumSpacing * 2
+            radius: Kirigami.Units.smallSpacing
+            color: Qt.rgba(0.9, 0.25, 0.25, 0.15)
+            border.color: Kirigami.Theme.negativeTextColor
+            border.width: 1
+
+            PlasmaComponents.Label {
+                id: errLabel
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.mediumSpacing
+                text: root.lastError
+                wrapMode: Text.Wrap
+                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                color: Kirigami.Theme.negativeTextColor
+            }
         }
 
         // --- Status Details Card ---
@@ -76,7 +103,7 @@ Item {
             Layout.preferredHeight: root.isActive ? (Kirigami.Units.gridUnit * 5.5) : (Kirigami.Units.gridUnit * 3)
             radius: Kirigami.Units.smallSpacing
             color: Kirigami.Theme.backgroundColor
-            border.color: Kirigami.Theme.separatorColor
+            border.color: Kirigami.Theme.disabledTextColor
             border.width: 1
 
             ColumnLayout {
@@ -166,7 +193,7 @@ Item {
             Layout.minimumHeight: Kirigami.Units.gridUnit * 5
             radius: Kirigami.Units.smallSpacing
             color: Kirigami.Theme.backgroundColor
-            border.color: Kirigami.Theme.separatorColor
+            border.color: Kirigami.Theme.disabledTextColor
             border.width: 1
 
             PlasmaComponents.ScrollView {
@@ -211,17 +238,21 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 0
                                 PlasmaComponents.Label {
-                                    text: modelData.ip + " (" + modelData.mac + ")"
+                                    text: (modelData.name && modelData.name !== "-")
+                                          ? modelData.name + " · " + modelData.ip
+                                          : modelData.ip
                                     font.bold: true
-                                    font.family: "Monospace"
-                                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize * 1.1
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
                                 }
                                 PlasmaComponents.Label {
-                                    text: i18n("Signal: ") + modelData.signal + " • Bitrate: " + modelData.tx_bitrate
+                                    text: modelData.mac + "  •  " + modelData.signal + "  •  " + modelData.tx_bitrate
+                                    font.family: "Monospace"
                                     font.pixelSize: Kirigami.Theme.smallFont.pixelSize * 0.9
                                     opacity: 0.7
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
                                 }
                             }
                         }
@@ -285,11 +316,23 @@ Item {
                         text: i18n("Band:")
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 4
                     }
-                    PlasmaComponents.ComboBox {
+                    QQC2.ComboBox {
                         id: editBand
                         model: ["2.4 GHz", "5 GHz"]
                         currentIndex: root.band === "5" ? 1 : 0
                         Layout.fillWidth: true
+                        Layout.minimumWidth: Kirigami.Units.gridUnit * 7
+                        Component.onCompleted: {
+                            // Sinkronkan channel saat band diganti agar tidak
+                            // tersimpan channel 2.4 GHz di profil 5 GHz.
+                            editBand.currentIndexChanged.connect(function() {
+                                var ch = Number(editChan.text);
+                                if (editBand.currentIndex === 1 && ch < 36)
+                                    editChan.text = "36";
+                                else if (editBand.currentIndex === 0 && ch > 13)
+                                    editChan.text = "6";
+                            });
+                        }
                     }
                     PlasmaComponents.Label {
                         text: i18n("Ch:")
@@ -356,10 +399,13 @@ Item {
                 PlasmaComponents.ToolTip.visible: hovered
             }
         }
+    }
+
     // --- QR Overlay (fullscreen panel) ---
     Rectangle {
         anchors.fill: parent
         visible: fullRoot.showQr
+        z: 10
         color: Kirigami.Theme.backgroundColor
         radius: Kirigami.Units.smallSpacing
 
@@ -433,5 +479,4 @@ Item {
             }
         }
     }
-}
 }

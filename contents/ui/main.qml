@@ -22,6 +22,7 @@ PlasmoidItem {
     property string freqInfo: ""
     property var clients: []
     property string qrImagePath: ""
+    property string lastError: ""
 
     preferredRepresentation: compactRepresentation
     toolTipMainText: isActive ? (i18n("Hotspot Active: ") + ssid) : i18n("Hotspot Off")
@@ -56,7 +57,16 @@ PlasmoidItem {
                     console.log("Hotspot JSON parse error:", e);
                     root.isLoading = false;
                 }
+            } else if (sourceName.indexOf("hotspot json") !== -1) {
+                // json gagal (mis. exit != 0) tidak boleh bikin spinner nyangkut
+                root.isLoading = false;
             } else if (sourceName.indexOf("start") !== -1 || sourceName.indexOf("stop") !== -1 || sourceName.indexOf("restart") !== -1) {
+                if (exitCode !== 0) {
+                    root.lastError = stdout || i18n("Command failed (exit code ") + exitCode + ")";
+                    root.isLoading = false;
+                } else {
+                    root.lastError = "";
+                }
                 pollTimer.restart();
             } else if (stdout.indexOf("/tmp/hotspot-qr.png") !== -1) {
                 root.qrImagePath = "file:///tmp/hotspot-qr.png?" + Date.now();
