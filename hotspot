@@ -51,10 +51,35 @@ EOF
     PASSWORD="${PASSWORD:-$DEFAULT_PASS}"
     BAND="${BAND:-$DEFAULT_BAND}"
     CHANNEL="${CHANNEL:-$DEFAULT_CHANNEL}"
+
+    normalize_band_channel
+}
+
+# Keep BAND/CHANNEL consistent: a 5 GHz profile carrying a 2.4 GHz channel
+# makes NetworkManager reject the AP profile ("not a valid channel").
+normalize_band_channel() {
+    local is5=0
+    [[ "$BAND" == "5" || "$BAND" == "5ghz" || "$BAND" == "a" ]] && is5=1
+
+    if [[ "$CHANNEL" == "0" || "$CHANNEL" == "auto" || -z "$CHANNEL" ]]; then
+        [[ $is5 -eq 1 ]] && CHANNEL="36" || CHANNEL="6"
+        return 0
+    fi
+
+    if [[ $is5 -eq 1 ]]; then
+        if ! [[ "$CHANNEL" =~ ^(36|40|44|48|149|153|157|161)$ ]]; then
+            CHANNEL="36"
+        fi
+    else
+        if ! [[ "$CHANNEL" =~ ^(1|2|3|4|5|6|7|8|9|10|11|12|13)$ ]]; then
+            CHANNEL="6"
+        fi
+    fi
 }
 
 save_config() {
     mkdir -p "$CONFIG_DIR"
+    normalize_band_channel
     cat <<EOF > "$CONFIG_FILE"
 # Hotspot Configuration
 SSID="$SSID"
@@ -190,11 +215,20 @@ show_qr() {
 start_hotspot() {
     load_config
 
-    local target_iface
-    target_iface=$(detect_aic8800) || {
+    local target_iface=""
+    # Dongle USB sering belum ter-enumerasi saat widget diklik tepat setelah boot
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if target_iface=$(detect_aic8800); then
+            break
+        fi
+        target_iface=""
+        sleep 1
+    done
+    if [[ -z "$target_iface" ]]; then
         echo -e "${C_RED}Error: Adapter USB AIC8800 tidak ditemukan!${C_RESET}"
+        echo -e "Cek dengan: ${C_CYAN}lsusb | grep -i aic${C_RESET} dan ${C_CYAN}iw dev${C_RESET}"
         exit 1
-    }
+    fi
 
     local internet_iface
     internet_iface=$(detect_intel_pcie || echo "none")
@@ -204,12 +238,27 @@ start_hotspot() {
 
     # Check if already active
     if is_hotspot_active "$target_iface"; then
-        echo -e "${C_YELLOW}Hotspot sudah aktif di interface ${target_iface}!${C_RESET}"
-        status_hotspot
-        return 0
+        local cur_ssid cur_band cur_ch
+        cur_ssid=$(nmcli -g 802-11-wireless.ssid connection show "$CON_NAME" 2>/dev/null || true)
+        cur_band=$(nmcli -g 802-11-wireless.band connection show "$CON_NAME" 2>/dev/null || true)
+        cur_ch=$(nmcli -g 802-11-wireless.channel connection show "$CON_NAME" 2>/dev/null || true)
+        normalize_band_channel
+        local want_band="bg"
+        [[ "$BAND" == "5" || "$BAND" == "5ghz" || "$BAND" == "a" ]] && want_band="a"
+
+        if [[ "$cur_ssid" == "$SSID" && "$cur_band" == "$want_band" && "$cur_ch" == "$CHANNEL" ]]; then
+            echo -e "${C_YELLOW}Hotspot sudah aktif di interface ${target_iface}!${C_RESET}"
+            status_hotspot
+            return 0
+        fi
+        # Pengaturan berubah (mis. Save & Apply dari widget): terapkan ulang
+        echo -e "${C_CYAN}Pengaturan berubah, menerapkan ulang hotspot...${C_RESET}"
+        stop_hotspot >/dev/null 2>&1 || true
+        sleep 1
     fi
 
     # Map band
+    normalize_band_channel
     local nm_band="bg"
     if [[ "$BAND" == "5" || "$BAND" == "5ghz" || "$BAND" == "a" ]]; then
         nm_band="a"
@@ -224,7 +273,7 @@ start_hotspot() {
     echo -e "\n${C_BOLD}Menyiapkan Hotspot...${C_RESET}"
     echo -e "  • SSID     : ${C_GREEN}${SSID}${C_RESET}"
     echo -e "  • Password : ${C_GREEN}${PASSWORD}${C_RESET}"
-    echo -e "  • Band     : ${C_GREEN}$([[ "$nm_band" == "a" ]] && echo "5 GHz (802.11a/n/ac/ax)" || echo "2.4 GHz (802.11b/g/n/ax)")${C_RESET}"
+    echo -e "  • Band     : ${C_GREEN}$([[ "$nm_band" == "a" ]] && echo "5 GHz (Wi-Fi 6, 80 MHz)" || echo "2.4 GHz (Wi-Fi 6, 40 MHz)")${C_RESET}"
     echo -e "  • Channel  : ${C_GREEN}$([[ "$CHANNEL" == "0" || "$CHANNEL" == "auto" ]] && echo "Auto" || echo "$CHANNEL")${C_RESET}"
 
     # Remove existing profile if any to ensure clean configuration
@@ -244,16 +293,17 @@ start_hotspot() {
         802-11-wireless.band "$nm_band" \
         ipv4.method shared
 
-    # Set channel (default 6 for 2.4GHz, 36 for 5GHz to avoid buggy channels like 13)
+    # Channel must match the band. Fixed channel + fixed width are also required
+    # for the AIC8800 driver to enable HE (Wi-Fi 6) in AP mode; auto channel
+    # silently falls back to HT/VHT only.
+    normalize_band_channel
     local target_ch="$CHANNEL"
-    if [[ "$target_ch" == "0" || "$target_ch" == "auto" || -z "$target_ch" ]]; then
-        if [[ "$nm_band" == "a" ]]; then
-            target_ch="36"
-        else
-            target_ch="6"
-        fi
-    fi
     nmcli connection modify "$CON_NAME" 802-11-wireless.channel "$target_ch"
+    if [[ "$nm_band" == "a" ]]; then
+        nmcli connection modify "$CON_NAME" 802-11-wireless.channel-width 80
+    else
+        nmcli connection modify "$CON_NAME" 802-11-wireless.channel-width 40
+    fi
 
     if [[ -n "$PASSWORD" ]]; then
         nmcli connection modify "$CON_NAME" \
@@ -261,16 +311,18 @@ start_hotspot() {
             802-11-wireless-security.proto rsn \
             802-11-wireless-security.pairwise ccmp \
             802-11-wireless-security.group ccmp \
-            802-11-wireless-security.pmf 1 \
+            802-11-wireless-security.pmf 2 \
             802-11-wireless-security.psk "$PASSWORD"
     else
         nmcli connection modify "$CON_NAME" \
-            802-11-wireless-security.key-mgmt ""
+            802-11-wireless-security.key-mgmt "" \
+            802-11-wireless-security.pmf 2
     fi
 
     # Activate
     echo -e "Mengaktifkan Access Point pada ${target_iface}..."
-    if nmcli connection up "$CON_NAME" >/dev/null 2>&1; then
+    local activate_err
+    if activate_err=$(nmcli connection up "$CON_NAME" 2>&1); then
         echo -e "${C_GREEN}${C_BOLD}✓ Hotspot Berhasil Dinyalakan!${C_RESET}"
         
         # Get Gateway IP
@@ -283,7 +335,8 @@ start_hotspot() {
         # Check UFW warning if present
         check_firewall_quiet
     else
-        echo -e "${C_RED}Gagal mengaktifkan hotspot. Coba cek NetworkManager log.${C_RESET}"
+        echo -e "${C_RED}Gagal mengaktifkan hotspot:${C_RESET} ${activate_err}"
+        echo -e "Cek log: ${C_CYAN}journalctl -b -u NetworkManager | grep wlan${C_RESET}"
         exit 1
     fi
 }
@@ -295,10 +348,13 @@ stop_hotspot() {
     echo -e "Mematikan Hotspot..."
     if nmcli connection down "$CON_NAME" >/dev/null 2>&1; then
         echo -e "${C_GREEN}${C_BOLD}✓ Hotspot berhasil dimatikan.${C_RESET}"
-    else
-        # Try disconnecting device
+    elif is_hotspot_active "$target_iface"; then
+        # Only disconnect the dongle if it is actually running our AP profile;
+        # a blind device disconnect would kill a normal Wi-Fi connection.
         nmcli device disconnect "$target_iface" >/dev/null 2>&1 || true
-        echo -e "${C_GREEN}${C_BOLD}✓ Hotspot sudah tidak aktif.${C_RESET}"
+        echo -e "${C_GREEN}${C_BOLD}✓ Hotspot berhasil dimatikan.${C_RESET}"
+    else
+        echo -e "${C_YELLOW}Hotspot memang sudah mati.${C_RESET}"
     fi
 }
 
@@ -365,38 +421,16 @@ json_status() {
         ip_addr=$(ip -4 addr show dev "$target_iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1 || echo "10.42.0.1")
         freq_info=$(iw dev "$target_iface" info 2>/dev/null | grep -oP 'channel \d+ \(\d+ MHz\)' || echo "N/A")
 
-        local clients
-        clients=$(iw dev "$target_iface" station dump 2>/dev/null || true)
-        if [[ -n "$clients" ]]; then
+        local rows
+        rows=$(collect_clients "$target_iface")
+        if [[ -n "$rows" ]]; then
             local client_items=()
-            local current_mac=""
-            local signal="-"
-            local tx_bitrate="-"
-
-            while IFS= read -r line; do
-                if [[ "$line" =~ ^Station\ ([0-9a-fA-F:]{17}) ]]; then
-                    if [[ -n "$current_mac" ]]; then
-                        local ip
-                        ip=$(ip neigh show dev "$target_iface" 2>/dev/null | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
-                        [[ -z "$ip" ]] && ip="DHCP"
-                        client_items+=("{\"mac\":\"$current_mac\",\"ip\":\"$ip\",\"signal\":\"$signal\",\"tx_bitrate\":\"$tx_bitrate\"}")
-                    fi
-                    current_mac="${BASH_REMATCH[1]}"
-                    signal="-"
-                    tx_bitrate="-"
-                elif [[ "$line" =~ signal:[[:space:]]*([+-]?[0-9]+[[:space:]]*dBm) ]]; then
-                    signal="${BASH_REMATCH[1]}"
-                elif [[ "$line" =~ tx\ bitrate:[[:space:]]*([0-9.]+[[:space:]]*[A-Za-z/]+) ]]; then
-                    tx_bitrate="${BASH_REMATCH[1]}"
-                fi
-            done <<< "$clients"
-
-            if [[ -n "$current_mac" ]]; then
-                local ip
-                ip=$(ip neigh show dev "$target_iface" 2>/dev/null | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
-                [[ -z "$ip" ]] && ip="DHCP"
-                client_items+=("{\"mac\":\"$current_mac\",\"ip\":\"$ip\",\"signal\":\"$signal\",\"tx_bitrate\":\"$tx_bitrate\"}")
-            fi
+            local mac ip name signal tx_bitrate
+            while IFS='|' read -r mac ip name signal tx_bitrate; do
+                [[ -z "$mac" ]] && continue
+                client_items+=("$(printf '{"mac":"%s","ip":"%s","name":"%s","signal":"%s","tx_bitrate":"%s"}' \
+                    "$mac" "$(json_escape "$ip")" "$(json_escape "$name")" "$signal" "$tx_bitrate")")
+            done <<< "$rows"
 
             if [[ ${#client_items[@]} -gt 0 ]]; then
                 local IFS=","
@@ -421,31 +455,90 @@ json_status() {
 EOF
 }
 
-show_clients() {
+# Minimal escape for values embedded in the hand-built JSON status output.
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
+# Reverse-resolve a client IP to a hostname. dnsmasq on the AP answers PTR
+# for its own DHCP leases, so this usually yields the device name.
+# Prints nothing when the device has not announced a hostname.
+client_name() {
+    local ip="$1"
+    local server="${2:-}"
+    local name=""
+    [[ -z "$ip" || "$ip" == "DHCP" ]] && return 0
+
+    # Query the AP's own dnsmasq explicitly: the system resolver usually points
+    # at the upstream network and knows nothing about hotspot leases.
+    if command -v dig >/dev/null 2>&1; then
+        local target="@${server:-10.42.0.1}"
+        name=$(dig +short +time=1 +tries=1 "$target" -x "$ip" 2>/dev/null | grep -vE '^;' | head -n1 | sed 's/\.$//')
+    elif command -v host >/dev/null 2>&1; then
+        name=$(timeout 1 host "${server:-10.42.0.1}" "$ip" 2>/dev/null | awk '/domain name pointer/{sub(/\.$/,"",$NF); print $NF; exit}')
+    fi
+
+    if [[ -z "$name" ]] && command -v avahi-resolve-address >/dev/null 2>&1; then
+        name=$(timeout 0.3 avahi-resolve-address "$ip" 2>/dev/null | awk '{print $2}' | sed 's/\.local$//')
+    fi
+
+    [[ -n "$name" ]] && printf '%s' "$name"
+}
+
+# Emit one "mac|ip|name|signal|tx_bitrate" line per connected station.
+collect_clients() {
     local iface="$1"
     local clients
     clients=$(iw dev "$iface" station dump 2>/dev/null || true)
+    [[ -z "$clients" ]] && return 0
 
-    if [[ -z "$clients" ]]; then
-        echo -e "  ${C_DIM}(Belum ada perangkat yang terhubung)${C_RESET}"
-        return 0
-    fi
+    local neigh
+    neigh=$(ip neigh show dev "$iface" 2>/dev/null || true)
 
-    printf "  %-17s  %-15s  %-10s  %-12s\n" "MAC Address" "IP Address" "Signal" "TX Bitrate"
-    printf "  %-17s  %-15s  %-10s  %-12s\n" "-----------------" "---------------" "----------" "------------"
+    local gw
+    gw=$(ip -4 addr show dev "$iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1)
 
-    local current_mac=""
-    local signal=""
-    local tx_bitrate=""
+    local cache_dir="${XDG_RUNTIME_DIR:-/tmp}/hotspot-names"
+    mkdir -p "$cache_dir" 2>/dev/null || cache_dir=""
+
+    local current_mac="" signal="-" tx_bitrate="-"
+    local ip name
+
+    flush_client() {
+        [[ -z "$current_mac" ]] && return 0
+        ip=$(awk -v m="$current_mac" 'tolower($3)==tolower(m) {print $1; exit}' <<< "$neigh")
+        [[ -z "$ip" ]] && ip="DHCP"
+
+        name=""
+        if [[ -n "$cache_dir" ]]; then
+            local cf="$cache_dir/${current_mac//:/}"
+            if [[ -f "$cf" ]]; then
+                local age cached
+                age=$(( $(date +%s) - $(stat -c %Y "$cf" 2>/dev/null || echo 0) ))
+                cached=$(cat "$cf" 2>/dev/null || true)
+                # Names live 10 minutes; misses retry after 60s so devices that
+                # announce their hostname late still get picked up.
+                if [[ -n "$cached" && $age -lt 600 ]] || [[ -z "$cached" && $age -lt 60 ]]; then
+                    name="$cached"
+                fi
+            fi
+            if [[ -z "$name" ]]; then
+                name=$(client_name "$ip" "$gw")
+                printf '%s' "$name" > "$cf" 2>/dev/null || true
+            fi
+        else
+            name=$(client_name "$ip" "$gw")
+        fi
+
+        printf '%s|%s|%s|%s|%s\n' "$current_mac" "$ip" "${name:--}" "$signal" "$tx_bitrate"
+    }
 
     while IFS= read -r line; do
         if [[ "$line" =~ ^Station\ ([0-9a-fA-F:]{17}) ]]; then
-            if [[ -n "$current_mac" ]]; then
-                local ip
-                ip=$(ip neigh show dev "$iface" | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
-                [[ -z "$ip" ]] && ip="DHCP"
-                printf "  %-17s  %-15s  %-10s  %-12s\n" "$current_mac" "$ip" "$signal" "$tx_bitrate"
-            fi
+            flush_client
             current_mac="${BASH_REMATCH[1]}"
             signal="-"
             tx_bitrate="-"
@@ -455,13 +548,26 @@ show_clients() {
             tx_bitrate="${BASH_REMATCH[1]}"
         fi
     done <<< "$clients"
+    flush_client
+}
 
-    if [[ -n "$current_mac" ]]; then
-        local ip
-        ip=$(ip neigh show dev "$iface" | grep -i "$current_mac" | awk '{print $1; exit}' || echo "DHCP")
-        [[ -z "$ip" ]] && ip="DHCP"
-        printf "  %-17s  %-15s  %-10s  %-12s\n" "$current_mac" "$ip" "$signal" "$tx_bitrate"
+show_clients() {
+    local iface="$1"
+    local rows
+    rows=$(collect_clients "$iface")
+
+    if [[ -z "$rows" ]]; then
+        echo -e "  ${C_DIM}(Belum ada perangkat yang terhubung)${C_RESET}"
+        return 0
     fi
+
+    printf "  %-24s  %-17s  %-15s  %-10s  %-12s\n" "Name" "MAC Address" "IP Address" "Signal" "TX Bitrate"
+    printf "  %-24s  %-17s  %-15s  %-10s  %-12s\n" "------------------------" "-----------------" "---------------" "----------" "------------"
+
+    local mac ip name signal tx_bitrate
+    while IFS='|' read -r mac ip name signal tx_bitrate; do
+        printf "  %-24s  %-17s  %-15s  %-10s  %-12s\n" "${name:--}" "$mac" "$ip" "$signal" "$tx_bitrate"
+    done <<< "$rows"
 }
 
 check_firewall_quiet() {
